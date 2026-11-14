@@ -88,6 +88,16 @@ class BankAccount(AbstractAccount):
         if self.status == "closed":
             raise AccountClosedError ("Счет закрыт")
 
+    def _check_amount(self, amount):
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+            raise InvalidOperationError("Сумма должна быть числом")
+
+        if isinstance(amount, float) and not isfinite(amount):
+            raise InvalidOperationError("Сумма должна быть конечным числом")
+
+        if amount <= 0:
+            raise InvalidOperationError("Сумма должна быть больше нуля")
+
     def deposit(self, amount):
         self._check_status()
         if isinstance(amount, bool) or not isinstance(amount, (int, float)):
@@ -101,12 +111,7 @@ class BankAccount(AbstractAccount):
 
     def withdraw(self, amount):
         self._check_status()
-        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
-            raise InvalidOperationError("Сумма должна быть числом")
-        if isinstance(amount, float) and not isfinite(amount):
-            raise InvalidOperationError("Сумма должна быть конечным числом")
-        if amount <= 0:
-            raise InvalidOperationError("Сумма должна быть больше нуля")
+        self._check_amount(amount)
 
         if amount > self._balance:
             raise InsufficientFundsError("Недостаточно денег")
@@ -131,24 +136,24 @@ class BankAccount(AbstractAccount):
             f"Баланс: {self._balance} {self.currency}"
         )
 
+if __name__ == "__main__":
+    account = BankAccount("Анна", 1000)
+    frozen_account = BankAccount("Иван", 500, status="frozen")
 
-account = BankAccount("Анна", 1000)
-frozen_account = BankAccount("Иван", 500, status="frozen")
-
-account.deposit(500)
-account.withdraw(200)
-print(account)
+    account.deposit(500)
+    account.withdraw(200)
+    print(account)
 
 
-try:
-    frozen_account.deposit(100)
-except AccountFrozenError as error:
-    print("Пополнение отклонено:", error)
+    try:
+        frozen_account.deposit(100)
+    except AccountFrozenError as error:
+        print("Пополнение отклонено:", error)
 
-try:
-    frozen_account.withdraw(100)
-except AccountFrozenError as error:
-    print("Снятие отклонено:", error)
+    try:
+        frozen_account.withdraw(100)
+    except AccountFrozenError as error:
+        print("Снятие отклонено:", error)
 
-print(frozen_account)
+    print(frozen_account)
 
