@@ -1,4 +1,5 @@
 from bank_account_day1 import BankAccount
+from bank_account_day2 import InvestmentAccount, PremiumAccount, SavingsAccount
 from datetime import datetime
 
 class Client:
@@ -15,7 +16,9 @@ class Client:
         self.failed_attempts = 0
 
 class Bank:
-    def __init__(self):
+    def __init__(self, clock=datetime.now):
+        # Сохраняем функцию и вызываем её при каждой проверке.
+        self._clock = clock
         self.clients = {}
         self.accounts = {}
         self.suspicious_events = []
@@ -63,10 +66,8 @@ class Bank:
 
         return ranking
 
-    def _check_operation_time(self, now=None):
-        # None означает, что время при вызове не передали.
-        if now is None:
-            now = datetime.now()  # Текущее местное время компьютера.
+    def _check_operation_time(self):
+        now = self._clock()
 
         # now.hour — целое число (int) от 0 до 23.
         if now.hour < 5:
@@ -80,10 +81,9 @@ class Bank:
 
         self.clients[client.client_id] = client
 
-    def open_account(self, client_id, balance, now=None):
-        # None означает, что время при вызове не указали.
+    def open_account(self, client_id, balance, *, account_type="regular", **account_options):
 
-        self._check_operation_time(now)
+        self._check_operation_time()
 
 
         # Открываем счета только клиентам, которые уже добавлены в банк.
@@ -92,7 +92,18 @@ class Bank:
 
         # Находим клиента по ID и создаём счёт на его имя.
         client = self.clients[client_id]
-        account = BankAccount(client.full_name, balance)
+        account_types = {
+            "regular": BankAccount,
+            "savings": SavingsAccount,
+            "premium": PremiumAccount,
+            "investment": InvestmentAccount,
+        }
+        if account_type not in account_types:
+            raise ValueError("Неизвестный тип счёта")
+
+        account_class = account_types[account_type]
+        account = account_class(client.full_name, balance, **account_options)
+        account._operation_time_check = self._check_operation_time
 
         # Банк сохраняет сам счёт, а клиент получает его номер в свой список.
         self.accounts[account.account_id] = account
@@ -101,9 +112,9 @@ class Bank:
         # Отдаём созданный счёт, чтобы вызывающий код мог сразу им пользоваться.
         return account
 
-    def freeze_account(self, account_id, now=None):
+    def freeze_account(self, account_id):
 
-        self._check_operation_time(now)
+        self._check_operation_time()
         # Проверяем, что банк знает счёт с таким номером.
         if account_id not in self.accounts:
             raise ValueError("Счёт с таким номером не найден")
@@ -118,8 +129,8 @@ class Bank:
         account.status = "frozen"
 
 
-    def unfreeze_account(self, account_id, now=None):
-        self._check_operation_time(now)
+    def unfreeze_account(self, account_id):
+        self._check_operation_time()
         # Проверяем, что банк знает счёт с таким номером.
         if account_id not in self.accounts:
             raise ValueError("Счёт с таким номером не найден")
@@ -134,8 +145,8 @@ class Bank:
         account.status = "active"
 
 
-    def close_account(self, account_id, now=None):
-        self._check_operation_time(now)
+    def close_account(self, account_id):
+        self._check_operation_time()
         # Проверяем, что банк знает счёт с таким номером.
         if account_id not in self.accounts:
             raise ValueError("Счёт с таким номером не найден")
@@ -228,7 +239,7 @@ if __name__ == "__main__":
     print(anna.full_name)    # Анна Иванова
     print(anna.account_ids)  # []
 
-    bank = Bank()
+    bank = Bank(clock=lambda: demo_time)
     print(bank.clients)  # {}
 
     bank.add_client(anna)
@@ -237,24 +248,24 @@ if __name__ == "__main__":
     print(bank.authenticate_client("C999", "0123"))  # False
     print(bank.clients["C001"].full_name)  # Анна Иванова
 
-    account = bank.open_account("C001", 1000, now=demo_time)
+    account = bank.open_account("C001", 1000)
     print(account.status)
     print(account)           # Счёт Анны с балансом 1000
     print(anna.account_ids)  # Список с номером этого счёта
 
-    bank.freeze_account(account.account_id, now=demo_time)
+    bank.freeze_account(account.account_id)
     print(account.status)  # frozen
 
-    bank.unfreeze_account(account.account_id, now=demo_time)
+    bank.unfreeze_account(account.account_id)
     print(account.status)  # active
 
     account.withdraw(1000)
 
-    bank.close_account(account.account_id, now=demo_time)
+    bank.close_account(account.account_id)
     print(account.status)
 
     # Открываем Анне второй счёт с начальным балансом 500.
-    bank.open_account("C001", 500, now=demo_time)
+    bank.open_account("C001", 500)
 
     # Метод возвращает список (list) из двух объектов счетов.
     accounts = bank.search_accounts("C001")
@@ -267,7 +278,7 @@ if __name__ == "__main__":
     # Создаём второго клиента и открываем ему счёт.
     ivan = Client("Иван Петров", "C002", 30, {"phone": "555-0102"}, pin="5678")
     bank.add_client(ivan)
-    bank.open_account("C002", 300, now=demo_time)
+    bank.open_account("C002", 300)
 
     # У Анны уже была одна ошибка выше. Верный PIN сбрасывает счётчик.
     bank.authenticate_client("C001", "0123")

@@ -32,7 +32,7 @@ class SavingsAccount(BankAccount):
         self.monthly_rate = monthly_rate
 
     def withdraw(self, amount):
-        self._check_status()
+        self._check_operation_allowed()
         self._check_amount(amount)
 
         if self._balance - amount < self.min_balance:
@@ -41,7 +41,7 @@ class SavingsAccount(BankAccount):
         super().withdraw(amount)
 
     def apply_monthly_interest(self):
-        self._check_status()
+        self._check_operation_allowed()
         interest = self._balance * self.monthly_rate
         self._balance = self._balance + interest
 
@@ -89,7 +89,7 @@ class PremiumAccount(BankAccount):
         self.withdrawal_fee = withdrawal_fee
 
     def withdraw(self, amount):
-        self._check_status()
+        self._check_operation_allowed()
         self._check_amount(amount)
 
         if amount > self.withdrawal_limit:

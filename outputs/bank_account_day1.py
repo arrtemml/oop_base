@@ -81,6 +81,12 @@ class BankAccount(AbstractAccount):
         )
 
         self.currency = currency
+        self._operation_time_check = None
+
+    def _check_operation_allowed(self):
+        if self._operation_time_check is not None:
+            self._operation_time_check()
+        self._check_status()
 
     def _check_status(self):
         if self.status == "frozen":
@@ -99,7 +105,7 @@ class BankAccount(AbstractAccount):
             raise InvalidOperationError("Сумма должна быть больше нуля")
 
     def deposit(self, amount):
-        self._check_status()
+        self._check_operation_allowed()
         if isinstance(amount, bool) or not isinstance(amount, (int, float)):
             raise InvalidOperationError("Сумма должна быть числом")
         if isinstance(amount, float) and not isfinite(amount):
@@ -110,7 +116,7 @@ class BankAccount(AbstractAccount):
         self._balance = self._balance + amount
 
     def withdraw(self, amount):
-        self._check_status()
+        self._check_operation_allowed()
         self._check_amount(amount)
 
         if amount > self._balance:

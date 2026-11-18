@@ -140,8 +140,8 @@ class TransactionProcessor:
             sender = self._find_account(transaction.sender_id)
             recipient = self._find_account(transaction.recipient_id)
             # Проверяем статус у каждого из двух объектов счёта.
-            sender._check_status()
-            recipient._check_status()
+            sender._check_operation_allowed()
+            recipient._check_operation_allowed()
             # Проверяем сумму из заявки. При ошибке Python перейдёт в except.
             sender._check_amount(transaction.amount)
 
@@ -181,7 +181,7 @@ class TransactionProcessor:
 
             try:
                 recipient.deposit(amount_to_deposit)
-            except InvalidOperationError:
+            except (ValueError, AccountFrozenError, AccountClosedError, InvalidOperationError):
                 # Возвращаем точный исходный баланс, включая возможную комиссию снятия.
                 sender._balance = sender_balance_before
                 raise  # Передаём ту же ошибку во внешний except.
@@ -254,11 +254,11 @@ class TransactionProcessor:
 if __name__ == "__main__":
     # Фиксируем время, чтобы открытие счетов прошло вне ночного запрета.
     demo_time = datetime(2026, 11, 17, 12, 0)
-    bank = Bank()
+    bank = Bank(clock=lambda: demo_time)
     bank.add_client(Client("Анна", "A", 25, {}, pin="0123"))
     bank.add_client(Client("Иван", "B", 25, {}, pin="1234"))
-    sender = bank.open_account("A", 1000, now=demo_time)
-    recipient = bank.open_account("B", 500, now=demo_time)
+    sender = bank.open_account("A", 1000)
+    recipient = bank.open_account("B", 500)
 
     queue = TransactionQueue()
     processor = TransactionProcessor(bank)
@@ -267,8 +267,8 @@ if __name__ == "__main__":
     queue.add(Transaction(sender.account_id, recipient.account_id, 200))
     queue.add(Transaction(sender.account_id, recipient.account_id, 100, priority=5))
     queue.add(Transaction(sender.account_id, recipient.account_id, -50))
-    frozen = bank.open_account("B", 0, now=demo_time)
-    bank.freeze_account(frozen.account_id, now=demo_time)
+    frozen = bank.open_account("B", 0)
+    bank.freeze_account(frozen.account_id)
 
     # 4. Внешний перевод: Анна платит 50 + 20 комиссии.
     queue.add(Transaction(sender.account_id, recipient.account_id, 50, is_external=True))
