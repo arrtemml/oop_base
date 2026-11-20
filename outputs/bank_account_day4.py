@@ -105,9 +105,11 @@ class TransactionQueue:
 
 
 class TransactionProcessor:
-    def __init__(self, bank):
+    def __init__(self, bank, risk_analyzer=None, audit_log=None):
         # bank — объект Bank из Дня 3. Сохраняем ссылку на него.
         self.bank = bank
+        self.risk_analyzer = risk_analyzer
+        self.audit_log = audit_log
 
         # {} создаёт словарь (dict). Ключ — пара валют, значение — курс.
         # ("RUB", "USD") — кортеж (tuple): из какой валюты и в какую.
@@ -116,7 +118,25 @@ class TransactionProcessor:
             ("USD", "RUB"): 100,
         }
 
+    def _analyze_risk(self, transaction):
+        # По номеру счёта находим ID клиента-отправителя.
+        client_id = self._find_client_id(transaction.sender_id)
 
+        # Приводим сумму к рублям для сравнения с порогом крупной суммы.
+        amount_in_rub = self._convert(
+            transaction.amount, transaction.currency, "RUB"
+        )
+
+        # Вызываем сохранённую в банке функцию получения времени.
+        timestamp = self.bank._clock()
+
+        # Передаём данные анализатору и возвращаем его словарь результата.
+        return self.risk_analyzer.analyze(
+            client_id,
+            transaction.recipient_id,
+            amount_in_rub,
+            timestamp,
+        )
 
     def _find_account(self, account_id):
         # self.bank.accounts — словарь (dict): номер → объект счёта.
@@ -139,9 +159,9 @@ class TransactionProcessor:
             # По двум номерам (str) получаем два объекта счёта.
             sender = self._find_account(transaction.sender_id)
             recipient = self._find_account(transaction.recipient_id)
-            # Проверяем статус у каждого из двух объектов счёта.
-            sender._check_operation_allowed()
-            recipient._check_operation_allowed()
+            # Пока проверяем только статусы счетов.
+            sender._check_status()
+            recipient._check_status()
             # Проверяем сумму из заявки. При ошибке Python перейдёт в except.
             sender._check_amount(transaction.amount)
 
@@ -164,6 +184,49 @@ class TransactionProcessor:
             amount_to_deposit = self._convert(
                 transaction.amount, transaction.currency, recipient.currency
             )
+
+            # Если обработчику передали анализатор, получаем оценку.
+            if self.risk_analyzer is not None:
+                # risk — словарь (dict) с ключами "level" и "reasons".
+                risk = self._analyze_risk(transaction)
+
+                # Получаем ID клиента, которому принадлежит счёт отправителя.
+                client_id = self._find_client_id(transaction.sender_id)
+
+                # Запоминаем время текущей попытки перевода.
+                self.risk_analyzer.remember_operation(
+                    client_id, self.bank._clock()
+                )
+
+                # Записываем оценку, если обработчику передали журнал.
+                if self.audit_log is not None:
+                    # Уровень записи журнала отличается от уровня риска.
+                    if risk["level"] == "low":
+                        log_level = "info"
+                    else:
+                        log_level = "warning"
+
+                    # details — словарь (dict) с данными конкретного перевода.
+                    self.audit_log.record(
+                        log_level,
+                        "Оценка риска перевода",
+                        details={
+                            "client_id": self._find_client_id(transaction.sender_id),
+                            "transaction_id": transaction.transaction_id,
+                            "risk_level": risk["level"],
+                            "reasons": risk["reasons"],
+                        },
+                    )
+
+                # ["level"] достаёт строку с уровнем риска.
+                if risk["level"] == "high":
+                    raise InvalidOperationError("Перевод отклонён: высокий риск")
+
+            # Оценка уже записана в аудит.
+            # Теперь проверяем время и статус перед финансовой операцией.
+            sender._check_operation_allowed()
+            recipient._check_operation_allowed()
+
 
             # is_external — логическое значение (bool).
             # Для внешнего перевода комиссия 20, для внутреннего 0.
@@ -194,6 +257,20 @@ class TransactionProcessor:
             transaction.processed_at = datetime.now()
             # isinstance() вернёт True, если пойманная ошибка означает отсутствие курса.
             transaction.can_retry = isinstance(error, ExchangeRateUnavailableError)
+
+            # Если журнал подключён, сохраняем причину отказа.
+            if self.audit_log is not None:
+                self.audit_log.record(
+                    "error",
+                    str(error),
+                    details={
+                        # {} — словарь (dict) данных об ошибке.
+                        "transaction_id": transaction.transaction_id,
+                        "sender_id": transaction.sender_id,
+                        "recipient_id": transaction.recipient_id,
+                    },
+                )
+
             return
 
 
@@ -207,6 +284,16 @@ class TransactionProcessor:
         transaction.status = "completed"
         transaction.fee = fee
         transaction.processed_at = datetime.now()
+
+        # Обновляем историю, если анализатор подключён.
+        if self.risk_analyzer is not None:
+            # По номеру счёта получаем ID клиента-отправителя.
+            client_id = self._find_client_id(transaction.sender_id)
+
+            # Запоминаем номер получателя для этого клиента.
+            self.risk_analyzer.remember_recipient(
+                client_id, transaction.recipient_id
+            )
 
     def retry(self, transaction):
         # != означает «не равно». Повторяем только заявки со статусом failed.
@@ -250,6 +337,18 @@ class TransactionProcessor:
 
         # * умножает сумму на курс. return возвращает результат.
         return amount * rate
+
+    def _find_client_id(self, account_id):
+        # clients — словарь (dict): ID клиента → объект Client.
+        # values() позволяет перебрать сами объекты клиентов.
+        for client in self.bank.clients.values():
+            # account_ids — список (list) номеров счетов клиента.
+            # in проверяет, есть ли нужный номер в этом списке.
+            if account_id in client.account_ids:
+                return client.client_id
+
+        # Цикл закончился, но владельца счёта не нашли.
+        raise ValueError("Владелец счёта не найден")
 
 if __name__ == "__main__":
     # Фиксируем время, чтобы открытие счетов прошло вне ночного запрета.
